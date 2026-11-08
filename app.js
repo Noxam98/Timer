@@ -253,9 +253,25 @@
   const LAYOUT_KEYS = new Set(['sizeMode', 'tileSize', 'tileCount', 'unitSec', 'gap', 'radius']);
   const ORDER_KEYS = new Set(['order', 'reverse']);
 
+  /* Без сохранённых настроек тема подстраивается под светлую/тёмную тему устройства. */
+  function prefersLight() {
+    const attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'light' || attr === 'dark') return attr === 'light';
+    try { return window.matchMedia('(prefers-color-scheme: light)').matches; } catch { return false; }
+  }
+
+  function defaultSettings() {
+    const s = { ...DEFAULTS };
+    if (prefersLight()) {
+      const day = THEMES[1];
+      for (const k of THEME_KEYS) s[k] = day[k];
+    }
+    return s;
+  }
+
   function loadSettings() {
     const saved = storageGet(SKEY) || {};
-    const s = { ...DEFAULTS };
+    const s = defaultSettings();
     for (const k of Object.keys(DEFAULTS)) {
       if (k in saved && typeof saved[k] === typeof DEFAULTS[k]) s[k] = saved[k];
     }
@@ -1100,8 +1116,8 @@
         case 'range': {
           const step = item.step || 1;
           entry.lab = h('span', { class: 'lbl' });
-          entry.num = h('input', { type: 'number', class: 'num', min: item.min, max: item.max, step });
-          entry.range = h('input', { type: 'range', min: item.min, max: item.max, step });
+          entry.num = h('input', { type: 'number', class: 'num', id: `set-${item.key}-num`, min: item.min, max: item.max, step });
+          entry.range = h('input', { type: 'range', id: `set-${item.key}`, min: item.min, max: item.max, step });
           row = h('div', { class: 'row' },
             h('label', { class: 'row-head' }, entry.lab,
               h('span', { class: 'val' }, entry.num, item.unit ? h('span', { text: item.unit }) : null)),
@@ -1116,7 +1132,7 @@
         }
         case 'select': {
           entry.lab = h('span', { class: 'lbl' });
-          entry.input = h('select');
+          entry.input = h('select', { id: `set-${item.key}` });
           for (const [val, text] of item.options) entry.input.append(h('option', { value: val, text }));
           row = h('label', { class: 'row' }, h('div', { class: 'row-head' }, entry.lab), entry.input);
           entry.input.addEventListener('change', () => {
@@ -1126,14 +1142,14 @@
         }
         case 'check': {
           entry.lab = h('span', { class: 'lbl' });
-          entry.check = h('input', { type: 'checkbox' });
+          entry.check = h('input', { type: 'checkbox', id: `set-${item.key}` });
           row = h('label', { class: 'row switch' }, entry.lab, entry.check);
           entry.check.addEventListener('change', () => setValue(item.key, entry.check.checked));
           break;
         }
         case 'color': {
           entry.lab = h('span', { class: 'lbl' });
-          entry.input = h('input', { type: 'color' });
+          entry.input = h('input', { type: 'color', id: `set-${item.key}` });
           row = h('label', { class: 'row color-row' }, entry.lab, entry.input);
           entry.input.addEventListener('input', () => setValue(item.key, entry.input.value));
           break;
@@ -1348,9 +1364,26 @@
   btnFs.addEventListener('click', (ev) => { blurAfterClick(ev); toggleFs(); });
   $('#btnClose').addEventListener('click', () => setPanel(false));
   $('#btnDemo').addEventListener('click', runDemo);
-  $('#btnResetSettings').addEventListener('click', () => {
-    if (!window.confirm('Вернуть все настройки по умолчанию? Время таймера сохранится.')) return;
-    S = { ...DEFAULTS, duration: S.duration };
+  const btnResetSettings = $('#btnResetSettings');
+  const resetLabel = btnResetSettings.textContent;
+  let resetArmed = 0;
+  btnResetSettings.addEventListener('click', () => {
+    if (!resetArmed) {
+      btnResetSettings.textContent = 'Нажмите ещё раз, чтобы сбросить';
+      btnResetSettings.classList.add('armed');
+      resetArmed = setTimeout(() => {
+        resetArmed = 0;
+        btnResetSettings.textContent = resetLabel;
+        btnResetSettings.classList.remove('armed');
+      }, 4000);
+      return;
+    }
+    clearTimeout(resetArmed);
+    resetArmed = 0;
+    btnResetSettings.textContent = 'Настройки сброшены';
+    btnResetSettings.classList.remove('armed');
+    setTimeout(() => { if (!resetArmed) btnResetSettings.textContent = resetLabel; }, 2000);
+    S = { ...defaultSettings(), duration: S.duration };
     storageSet(SKEY, S);
     buildLayout();
     applySetting('bg');
@@ -1406,12 +1439,17 @@
   });
 
   window.addEventListener('resize', resize);
+  window.addEventListener('hashchange', () => {
+    const sec = hashDuration();
+    if (sec) setDuration(sec);
+  });
 
   /* =========================================================
    * Старт
    * ========================================================= */
   const params = new URLSearchParams(window.location.search);
-  const urlDuration = params.has('t') ? parseDuration(params.get('t')) : null;
+  const hashDuration = () => parseDuration(decodeURIComponent(window.location.hash.slice(1)));
+  const urlDuration = (params.has('t') ? parseDuration(params.get('t')) : null) || hashDuration();
   if (urlDuration) {
     S.duration = clamp(urlDuration, 1, MAX_DURATION);
     Object.assign(T, { status: 'idle', acc: 0, startedAt: 0, duration: S.duration * 1000 });
