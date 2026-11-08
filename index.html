@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Таймер</title>
+  <meta name="description" content="Полноэкранный таймер: оставшееся время видно по элементам, которые уходят с экрана.">
+  <meta name="theme-color" content="#0b0d12">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="is-idle">
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2z" fill="currentColor"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.2" fill="currentColor"/><rect x="13.5" y="5" width="4" height="14" rx="1.2" fill="currentColor"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4.5v4h4"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+    <symbol id="i-collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
+  </svg>
+
+  <canvas id="stage" role="img" aria-label="Оставшееся время"></canvas>
+  <div id="dim" class="layer"></div>
+  <div id="flash" class="layer"></div>
+
+  <div id="clockWrap" class="layer clock-wrap" data-pos="center">
+    <div id="clock" class="clock" role="timer">
+      <span id="clockText" class="clock-text">05:00</span>
+      <span id="clockSub" class="clock-sub"></span>
+    </div>
+  </div>
+
+  <nav id="controls" class="controls" aria-label="Управление таймером">
+    <button id="btnStart" class="btn primary" type="button" title="Старт / пауза (Пробел)">
+      <svg aria-hidden="true"><use href="#i-play"/></svg><span class="btn-label">Старт</span>
+    </button>
+    <button id="btnReset" class="btn" type="button" title="Сброс (R)" aria-label="Сброс">
+      <svg aria-hidden="true"><use href="#i-reset"/></svg>
+    </button>
+    <button id="btnMinus" class="btn" type="button" title="Минус минута (↓)" aria-label="Минус минута">−1<span class="btn-unit">&nbsp;мин</span></button>
+    <button id="btnPlus" class="btn" type="button" title="Плюс минута (↑)" aria-label="Плюс минута">+1<span class="btn-unit">&nbsp;мин</span></button>
+    <button id="btnSettings" class="btn" type="button" title="Настройки (S)" aria-label="Настройки" aria-controls="panel" aria-expanded="false">
+      <svg aria-hidden="true"><use href="#i-sliders"/></svg>
+    </button>
+    <button id="btnFs" class="btn" type="button" title="Полный экран (F)" aria-label="Полный экран">
+      <svg aria-hidden="true"><use href="#i-expand"/></svg>
+    </button>
+  </nav>
+
+  <aside id="panel" class="panel" aria-label="Настройки" aria-hidden="true" inert>
+    <header class="panel-head">
+      <h2>Настройки</h2>
+      <button id="btnDemo" class="chip accent" type="button" title="Прокрутить весь отсчёт за 5 секунд (D)">▶ Демо</button>
+      <button id="btnClose" class="icon-btn" type="button" aria-label="Закрыть настройки">✕</button>
+    </header>
+    <div class="panel-body">
+      <section class="group">
+        <h3>Время</h3>
+        <div class="duration">
+          <label class="dur-field"><input id="durH" type="number" min="0" max="99" inputmode="numeric"><span>ч</span></label>
+          <label class="dur-field"><input id="durM" type="number" min="0" inputmode="numeric"><span>мин</span></label>
+          <label class="dur-field"><input id="durS" type="number" min="0" inputmode="numeric"><span>сек</span></label>
+        </div>
+        <div id="presets" class="chips"></div>
+        <p class="hint">Новое время сбрасывает текущий отсчёт. Во время отсчёта ±1 мин меняют только текущий запуск.</p>
+      </section>
+
+      <div id="settingsForm"></div>
+
+      <section class="group">
+        <h3>Клавиши</h3>
+        <dl class="keys">
+          <dt>Пробел</dt><dd>старт / пауза</dd>
+          <dt>R</dt><dd>сброс</dd>
+          <dt>↑ / ↓</dt><dd>плюс / минус минута</dd>
+          <dt>F</dt><dd>полный экран (или двойной клик)</dd>
+          <dt>S</dt><dd>настройки</dd>
+          <dt>D</dt><dd>демо</dd>
+          <dt>Esc</dt><dd>закрыть панель / выключить сигнал</dd>
+        </dl>
+        <p class="hint">Ссылка сразу с нужным временем: <code>?t=25</code> (минуты), <code>?t=1h30m</code>, <code>?t=90s</code>, <code>?t=5:00</code>.</p>
+      </section>
+
+      <section class="group">
+        <button id="btnResetSettings" class="chip danger wide" type="button">Сбросить все настройки</button>
+      </section>
+    </div>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>
