@@ -61,13 +61,24 @@
     <div class="panel-body">
       <section class="group">
         <h3>Время</h3>
-        <div class="duration">
-          <label class="dur-field"><input id="durH" type="number" min="0" max="99" inputmode="numeric"><span>ч</span></label>
-          <label class="dur-field"><input id="durM" type="number" min="0" inputmode="numeric"><span>мин</span></label>
-          <label class="dur-field"><input id="durS" type="number" min="0" inputmode="numeric"><span>сек</span></label>
+        <div class="seg" role="radiogroup" aria-label="Режим таймера">
+          <button id="modeDuration" class="seg-btn" type="button" role="radio" data-mode="duration" aria-checked="true">Длительность</button>
+          <button id="modeUntil" class="seg-btn" type="button" role="radio" data-mode="until" aria-checked="false">До времени</button>
         </div>
-        <div id="presets" class="chips"></div>
-        <p class="hint">Новое время сбрасывает текущий отсчёт. Во время отсчёта ±1 мин меняют только текущий запуск.</p>
+        <div id="durationBox">
+          <div class="duration">
+            <label class="dur-field"><input id="durH" type="number" min="0" max="99" inputmode="numeric"><span>ч</span></label>
+            <label class="dur-field"><input id="durM" type="number" min="0" inputmode="numeric"><span>мин</span></label>
+            <label class="dur-field"><input id="durS" type="number" min="0" inputmode="numeric"><span>сек</span></label>
+          </div>
+          <div id="presets" class="chips"></div>
+        </div>
+        <div id="untilBox" hidden>
+          <label class="until-field" for="untilTime"><span>Закончить в</span><input id="untilTime" type="time" step="60" required></label>
+          <p id="untilInfo" class="until-info"></p>
+          <div id="untilPresets" class="chips"></div>
+        </div>
+        <p id="timeHint" class="hint">Новое время сбрасывает текущий отсчёт. Во время отсчёта ±1 мин меняют только текущий запуск.</p>
       </section>
 
       <div id="settingsForm"></div>
@@ -83,7 +94,7 @@
           <dt>D</dt><dd>демо</dd>
           <dt>Esc</dt><dd>закрыть панель / выключить сигнал</dd>
         </dl>
-        <p class="hint">Ссылка сразу с нужным временем: допишите к адресу <code>#25m</code>, <code>#1h30m</code> или <code>#90s</code> (число без букв — минуты).</p>
+        <p class="hint">Ссылка сразу с нужным временем: допишите к адресу <code>#25m</code>, <code>#1h30m</code> или <code>#90s</code> (число без букв — минуты), а до времени — <code>#18-00</code>.</p>
       </section>
 
       <section class="group">

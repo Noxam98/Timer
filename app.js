@@ -148,6 +148,7 @@
 
   const DEFAULTS = {
     duration: 300,
+    timeMode: 'duration', untilTime: '18:00',
     // элементы
     sizeMode: 'size', tileSize: 64, tileCount: 60, unitSec: 60,
     gap: 4, radius: 22,
@@ -288,7 +289,8 @@
   /* =========================================================
    * Состояние таймера
    * ========================================================= */
-  const T = { status: 'idle', duration: S.duration * 1000, acc: 0, startedAt: 0, seed: newSeed() };
+  /* target — момент окончания по часам (режим «До времени»), 0 — обычный отсчёт. */
+  const T = { status: 'idle', duration: S.duration * 1000, acc: 0, startedAt: 0, target: 0, seed: newSeed() };
 
   (function loadTimer() {
     const st = storageGet(TKEY);
@@ -297,8 +299,9 @@
     Object.assign(T, {
       status: st.status, duration: st.duration, acc: st.acc, startedAt: st.startedAt,
       seed: Number.isFinite(st.seed) ? st.seed : T.seed,
+      target: Number.isFinite(st.target) ? st.target : 0,
     });
-    if (T.status === 'idle') T.duration = S.duration * 1000;
+    if (T.status === 'idle') Object.assign(T, { duration: idleDuration(Date.now()), target: 0 });
   })();
 
   const saveTimer = () => storageSet(TKEY, T);
@@ -306,6 +309,27 @@
   function elapsed(now) {
     const live = T.status === 'running' || T.status === 'done';
     return T.acc + (live ? now - T.startedAt : 0);
+  }
+
+  function parseClockTime(str) {
+    const m = /^(\d{1,2})[:.-](\d{2})$/.exec(String(str || '').trim());
+    if (!m || +m[1] > 23 || +m[2] > 59) return null;
+    return `${pad2(+m[1])}:${pad2(+m[2])}`;
+  }
+
+  /* Ближайший момент HH:MM: сегодня, а если он уже прошёл — завтра. */
+  function untilTarget(now) {
+    const [hh, mm] = (parseClockTime(S.untilTime) || '18:00').split(':').map(Number);
+    const d = new Date(now);
+    d.setHours(hh, mm, 0, 0);
+    if (d.getTime() <= now + 1000) d.setDate(d.getDate() + 1);
+    return d.getTime();
+  }
+
+  /* Длительность, которую покажет таймер до старта. */
+  function idleDuration(now) {
+    if (S.timeMode !== 'until') return S.duration * 1000;
+    return Math.ceil((untilTarget(now) - now) / 1000) * 1000;
   }
 
   function parseDuration(str) {
@@ -772,6 +796,23 @@
 
   const hhmm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 
+  function dayDiff(ms, now) {
+    const a = new Date(ms);
+    const b = new Date(now);
+    const da = new Date(a.getFullYear(), a.getMonth(), a.getDate());
+    const db = new Date(b.getFullYear(), b.getMonth(), b.getDate());
+    return Math.round((da - db) / 86400000);
+  }
+
+  /* «18:00», «08:00 завтра» или «08:00, 12.11» */
+  function fmtEnd(ms, now) {
+    const d = new Date(ms);
+    const diff = dayDiff(ms, now);
+    if (diff === 0) return hhmm(d);
+    if (diff === 1) return `${hhmm(d)} завтра`;
+    return `${hhmm(d)}, ${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}`;
+  }
+
   function fmtSpan(sec) {
     if (sec < 0.1) return `${Math.max(1, Math.round(sec * 1000))} мс`;
     if (sec < 1) return `${sec.toFixed(2).replace('.', ',')} с`;
@@ -813,7 +854,8 @@
   function updateClock(now) {
     const el = elapsed(now);
     const dur = T.duration;
-    const raw = dur - el;
+    // На паузе в режиме «До времени» окончание не сдвигается, поэтому показываем реальный остаток.
+    const raw = T.status === 'paused' && T.target ? T.target - now : dur - el;
     const parts = [];
     let text;
 
@@ -839,8 +881,11 @@
         }
         default: text = timeStr;
       }
-      if (S.showEndTime && (T.status === 'running' || T.status === 'paused') && rem > 0) {
-        parts.push(`до ${hhmm(new Date(now + rem))}`);
+      const untilRun = T.status === 'idle' ? S.timeMode === 'until' : T.target > 0;
+      const live = T.status === 'running' || T.status === 'paused';
+      if (rem > 0 && (untilRun || (S.showEndTime && live))) {
+        const end = T.target && T.status !== 'idle' ? T.target : untilRun ? untilTarget(now) : now + rem;
+        parts.push(`до ${fmtEnd(end, now)}`);
       }
     }
 
@@ -975,8 +1020,22 @@
 
   function start() {
     if (T.status === 'running') return;
-    if (T.status === 'idle') { T.acc = 0; T.duration = S.duration * 1000; }
-    T.startedAt = Date.now();
+    const now = Date.now();
+    if (T.status === 'idle') {
+      T.acc = 0;
+      if (S.timeMode === 'until') {
+        T.target = untilTarget(now);
+        T.duration = T.target - now;
+      } else {
+        T.target = 0;
+        T.duration = S.duration * 1000;
+      }
+      if (S.sizeMode === 'unit') buildLayout();
+    } else if (T.status === 'paused' && T.target) {
+      // Окончание привязано к часам: после паузы элементы догоняют реальное время.
+      T.acc = Math.max(0, T.duration - (T.target - now));
+    }
+    T.startedAt = now;
     T.status = 'running';
     lastTickSec = null;
     afterStateChange();
@@ -992,7 +1051,7 @@
   }
 
   function reset() {
-    Object.assign(T, { status: 'idle', acc: 0, startedAt: 0, duration: S.duration * 1000, seed: newSeed() });
+    Object.assign(T, { status: 'idle', acc: 0, startedAt: 0, target: 0, duration: idleDuration(Date.now()), seed: newSeed() });
     setAlarm(false);
     releaseWake();
     buildLayout();
@@ -1018,7 +1077,15 @@
 
   function adjust(deltaMs) {
     const now = Date.now();
-    if (T.status === 'idle') {
+    if (T.status === 'idle' && S.timeMode === 'until') {
+      // Сдвигаем время окончания на минуту
+      const [hh, mm] = (parseClockTime(S.untilTime) || '18:00').split(':').map(Number);
+      const total = (((hh * 60 + mm + Math.round(deltaMs / 60000)) % 1440) + 1440) % 1440;
+      S.untilTime = `${pad2(Math.floor(total / 60))}:${pad2(total % 60)}`;
+      T.duration = idleDuration(now);
+      saveSettings();
+      syncDuration();
+    } else if (T.status === 'idle') {
       const next = S.duration + deltaMs / 1000;
       if (next < 1) return;
       S.duration = clamp(next, 1, MAX_DURATION);
@@ -1028,11 +1095,14 @@
     } else if (T.status === 'done') {
       if (deltaMs <= 0) return;
       T.duration = elapsed(now) + deltaMs;
+      if (T.target) T.target = now + deltaMs;
       T.status = 'running';
       setAlarm(false);
       requestWake();
     } else {
+      const before = T.duration;
       T.duration = clamp(T.duration + deltaMs, 1000, MAX_DURATION * 1000);
+      if (T.target) T.target += T.duration - before;
     }
     if (S.sizeMode === 'unit') buildLayout();
     afterStateChange();
@@ -1040,6 +1110,23 @@
 
   function setDuration(sec) {
     S.duration = clamp(Math.round(sec), 1, MAX_DURATION);
+    S.timeMode = 'duration';
+    saveSettings();
+    reset();
+    syncDuration();
+  }
+
+  function setUntil(time) {
+    S.untilTime = time;
+    S.timeMode = 'until';
+    saveSettings();
+    reset();
+    syncDuration();
+  }
+
+  function setTimeMode(mode) {
+    if (S.timeMode === mode) return;
+    S.timeMode = mode;
     saveSettings();
     reset();
     syncDuration();
@@ -1199,6 +1286,14 @@
       const label = m < 60 ? `${m} мин` : m % 60 ? `${String(m / 60).replace('.', ',')} ч` : `${m / 60} ч`;
       presets.append(h('button', { type: 'button', class: 'chip', 'data-sec': m * 60, text: label, onclick: () => setDuration(m * 60) }));
     }
+    for (const b of document.querySelectorAll('.seg-btn')) {
+      b.addEventListener('click', () => setTimeMode(b.dataset.mode));
+    }
+    $('#untilTime').addEventListener('change', () => {
+      const t = parseClockTime($('#untilTime').value);
+      if (t) setUntil(t);
+      else syncDuration();
+    });
     for (const id of ['durH', 'durM', 'durS']) {
       $(`#${id}`).addEventListener('change', () => {
         const hh = Math.max(0, Number($('#durH').value) || 0);
@@ -1249,7 +1344,53 @@
     set('#durM', Math.floor((d % 3600) / 60));
     set('#durS', d % 60);
     for (const b of document.querySelectorAll('#presets .chip')) {
-      b.classList.toggle('active', Number(b.dataset.sec) === d);
+      b.classList.toggle('active', S.timeMode === 'duration' && Number(b.dataset.sec) === d);
+    }
+
+    const until = S.timeMode === 'until';
+    for (const b of document.querySelectorAll('.seg-btn')) {
+      b.setAttribute('aria-checked', String(b.dataset.mode === S.timeMode));
+    }
+    $('#durationBox').hidden = until;
+    $('#untilBox').hidden = !until;
+    set('#untilTime', parseClockTime(S.untilTime) || '18:00');
+    $('#timeHint').textContent = until
+      ? 'Если это время сегодня уже прошло, отсчёт пойдёт до завтра. Пауза не сдвигает окончание, а ±1 мин сдвигают его на минуту.'
+      : 'Новое время сбрасывает текущий отсчёт. Во время отсчёта ±1 мин меняют только текущий запуск.';
+    untilMinute = -1;
+    updateUntilInfo(Date.now());
+  }
+
+  /* Подсказка «Сегодня в 18:00, осталось …» и быстрые варианты ближайших получасов. */
+  let untilMinute = -1;
+  let untilInfoText = '';
+  function updateUntilInfo(now) {
+    if (S.timeMode !== 'until') return;
+    const minute = Math.floor(now / 60000);
+    if (minute !== untilMinute) {
+      untilMinute = minute;
+      const box = $('#untilPresets');
+      box.textContent = '';
+      const d = new Date(now + 5 * 60000);
+      d.setSeconds(0, 0);
+      const m = d.getMinutes();
+      if (m % 30) d.setMinutes(m + 30 - (m % 30));
+      for (let k = 0; k < 6; k++) {
+        const t = hhmm(d);
+        box.append(h('button', {
+          type: 'button', class: `chip${t === S.untilTime ? ' active' : ''}`, text: t, onclick: () => setUntil(t),
+        }));
+        d.setMinutes(d.getMinutes() + 30);
+      }
+    }
+    const target = T.target && T.status !== 'idle' ? T.target : untilTarget(now);
+    const left = Math.max(0, Math.ceil((target - now) / 1000));
+    const day = dayDiff(target, now);
+    const when = day === 0 ? 'Сегодня' : day === 1 ? 'Завтра' : `${pad2(new Date(target).getDate())}.${pad2(new Date(target).getMonth() + 1)}`;
+    const text = left > 0 ? `${when} в ${hhmm(new Date(target))}, осталось ${fmtSpan(left)}.` : 'Время вышло.';
+    if (text !== untilInfoText) {
+      untilInfoText = text;
+      $('#untilInfo').textContent = text;
     }
   }
 
@@ -1318,6 +1459,22 @@
         lastTickSec = sec;
       }
     }
+
+    if (T.status === 'idle' && S.timeMode === 'until') {
+      // До старта остаток до выбранного времени тает вместе с часами
+      const d = idleDuration(now);
+      if (d !== T.duration) {
+        T.duration = d;
+        if (S.sizeMode === 'unit' && targetCount() !== L.n) buildLayout();
+        else if (panelOpen) updateInfo();
+      }
+    } else if (T.status === 'paused' && T.target && now >= T.target) {
+      // На паузе наступило время окончания
+      T.acc = T.duration;
+      T.startedAt = T.target;
+      finish(now - T.target > 3000);
+    }
+    if (panelOpen) updateUntilInfo(now);
 
     if (demo && now - demo.start > demo.len + 700) {
       demo = null;
@@ -1440,19 +1597,30 @@
 
   window.addEventListener('resize', resize);
   window.addEventListener('hashchange', () => {
+    const time = hashUntil();
     const sec = hashDuration();
-    if (sec) setDuration(sec);
+    if (time) setUntil(time);
+    else if (sec) setDuration(sec);
   });
 
   /* =========================================================
    * Старт
    * ========================================================= */
   const params = new URLSearchParams(window.location.search);
-  const hashDuration = () => parseDuration(decodeURIComponent(window.location.hash.slice(1)));
-  const urlDuration = (params.has('t') ? parseDuration(params.get('t')) : null) || hashDuration();
-  if (urlDuration) {
+  const hashText = () => decodeURIComponent(window.location.hash.slice(1));
+  const hashDuration = () => parseDuration(hashText());
+  const hashUntil = () => (/^\d{1,2}-\d{2}$/.test(hashText()) ? parseClockTime(hashText()) : null);
+  const urlUntil = parseClockTime(params.get('until')) || hashUntil();
+  const urlDuration = urlUntil ? null : (params.has('t') ? parseDuration(params.get('t')) : null) || hashDuration();
+  if (urlUntil) {
+    S.timeMode = 'until';
+    S.untilTime = urlUntil;
+  } else if (urlDuration) {
+    S.timeMode = 'duration';
     S.duration = clamp(urlDuration, 1, MAX_DURATION);
-    Object.assign(T, { status: 'idle', acc: 0, startedAt: 0, duration: S.duration * 1000 });
+  }
+  if (urlUntil || urlDuration) {
+    Object.assign(T, { status: 'idle', acc: 0, startedAt: 0, target: 0, duration: idleDuration(Date.now()) });
     saveTimer();
   }
 
@@ -1464,6 +1632,6 @@
   updateButtons();
   updateFsIcon();
   if (T.status === 'running') requestWake();
-  if (urlDuration && params.get('autostart') === '1') start();
+  if ((urlUntil || urlDuration) && params.get('autostart') === '1') start();
   requestAnimationFrame(frame);
 })();
